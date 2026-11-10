@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">跳过B站暂停广告</string>
+    <string name="service_label">跳过B站暂停广告</string>
+
+    <string name="acc_description">用于在你暂停 B 站视频、弹出广告时自动点击广告上的关闭按钮。仅在本机读取界面控件信息，不联网、不修改 B 站。</string>
+    <string name="acc_summary">自动点击 B 站暂停广告的关闭按钮</string>
+
+    <string name="status_on">无障碍服务：已开启</string>
+    <string name="status_off">无障碍服务：未开启</string>
+
+    <string name="btn_open_acc">去开启无障碍服务</string>
+    <string name="btn_copy">复制最近节点树</string>
+    <string name="btn_dump">节点树存文件</string>
+    <string name="btn_shot">截图自检</string>
+    <string name="btn_clear">清空日志</string>
+
+    <string name="sw_enabled">自动关闭暂停广告</string>
+    <string name="sw_aggressive">激进模式（未识别出广告容器也尝试）</string>
+    <string name="sw_screenshot">命中广告时自动存截图（排查用）</string>
+    <string name="sw_capture">抓取模式：连续保存现场节点树（排查用）</string>
+
+    <string name="section_rules">规则</string>
+    <string name="section_tools">工具</string>
+    <string name="section_log">运行日志</string>
+    <string name="hit_count">已自动关闭 %1$d 次</string>
+
+    <string name="btn_guide">机型设置指引（必看）</string>
+    <string name="guide_title">机型设置指引</string>
+    <string name="guide_back">返回</string>
+    <string name="guide_warning">不要在多任务列表里划掉本应用，也不要让"一键清理"把它清掉 —— 进程被杀后无障碍服务会断，广告拦截随即失效。不想用时请关掉总开关，而不是划任务。</string>
+    <string name="guide_pick">选择你的手机品牌，里面有该品牌的设置路径，点条目可直接跳到对应设置页：</string>
+    <string name="guide_note">两点容易被忽略：\n\n① 自启动列表里可能找不到本应用，这是正常的 —— 它没有开机广播、也没有自建后台服务，无障碍服务由系统在你解锁屏幕后自动绑定。所以"自启动"这一项找不到就跳过，真正要设的是「电池优化 / 后台耗电」。\n\n② 重启手机后要先解锁一次，服务才会重新连上（实测：锁屏状态下不绑定，解锁瞬间自动连上）。\n\n③ 如果主页显示"服务已断开"，多半是被一键清理强停了：到系统无障碍里把本应用关掉再打开一次即可。</string>
+    <string name="privacy">本应用未申请任何权限，特别是没有联网权限，无法上传任何数据。</string>
+</resources>

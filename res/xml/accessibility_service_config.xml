@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  每一项都是必需的，删掉任何一个功能就会失效：
+  - canRetrieveWindowContent : 否则 getRootInActiveWindow() 永远返回 null
+  - flagReportViewIds        : 否则 getViewIdResourceName() 全为 null（B 站未混淆资源 id，这是最可靠的识别依据）
+  - flagIncludeNotImportantViews : 否则广告 SDK 标记 importantForAccessibility=no 的子树根本不会出现在节点树里
+  - accessibilityFeedbackType + description : 缺任一项服务不会出现在系统的无障碍列表
+  - packageNames             : 系统侧过滤，非 B 站事件不跨进程投递，这是第一层省电
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeWindowsChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagReportViewIds|flagIncludeNotImportantViews|flagRetrieveInteractiveWindows"
+    android:canPerformGestures="true"
+    android:canRetrieveWindowContent="true"
+    android:canTakeScreenshot="true"
+    android:description="@string/acc_description"
+    android:summary="@string/acc_summary"
+    android:isAccessibilityTool="true"
+    android:notificationTimeout="150"
+    android:packageNames="tv.danmaku.bili"
+    android:settingsActivity="com.luoqiang.bilipause.MainActivity" />

@@ -1,0 +1,23 @@
+# build output
+build/
+
+# toolchain (126MB, download it yourself - see README)
+tools/
+
+# signing key: NEVER commit. build.bat generates one if missing.
+keystore/
+
+# debug artifacts
+debug/
+
+# apksigner detached signature
+*.idsig
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+Thumbs.db
+.DS_Store
