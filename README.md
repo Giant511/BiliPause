@@ -8,6 +8,8 @@
 - 不 root、不装 Xposed / VirtualXposed、不改 B 站安装包、不抓包不走 VPN
 - 只在 B 站前台 + 只在播放器页 + 只在确实检测到广告层时才动手
 
+**下载**：[Releases → v1.4 APK](https://github.com/Giant511/BiliPause/releases/latest)（也可直接用仓库里的 `out/BiliPauseAd-1.4.apk`）
+
 <img src="docs/main.jpg" width="300" alt="主界面"> <img src="docs/guide.jpg" width="300" alt="机型设置指引">
 
 ## 原理
