@@ -38,6 +38,65 @@ final class PauseAdRule {
     };
     private static final String[] CLOSE_ID_WORDS = {"close", "skip", "dismiss"};
 
+    /**
+     * 播放器下方那个常驻广告位（B 站叫 underplayer，节点 id=ad_tint_frame）。
+     * 它不是暂停广告，只是视频页常驻的横幅；暂停时它甚至是 0 宽 0 高的。
+     * 关键：它的右上角离"评论详情"面板的 × 很近，一旦把它当锚点，
+     * 打开评论区时那个 × 就会被误点 —— 实测就是这么把评论区叉掉的。
+     */
+    private static final String UNDERPLAYER = "underplayer_container";
+
+    private static volatile String diag = "";
+
+    static String lastDiag() {
+        return diag;
+    }
+
+    /** 最近一次扫描看到的 close 语义候选数量（即使没命中）。用于"广告还在入场"时补扫 */
+    private static volatile int candCount = 0;
+
+    static int lastCandCount() {
+        return candCount;
+    }
+
+    /** 这一帧是否"值得存"：出现广告角标、倒计时文案或 close 语义控件 */
+    private static volatile boolean interesting = false;
+
+    static boolean lastInteresting() {
+        return interesting;
+    }
+
+    /**
+     * 播放器是否已暂停。B 站暂停后控制条会出现 id=gemini_halfscreen_play 的按钮（desc="播放"）。
+     * 暂停是"暂停广告"的唯一触发时机，识别到就进入密集采样窗口。
+     */
+    /**
+     * 这一帧是不是播放器页。用控件 id 判断，不依赖"进入页面的那个事件"——
+     * 服务重绑、重装、或在暂停状态下重新连接时不会有新的页面事件，靠事件记状态会永远停在 false。
+     */
+    static boolean looksPlayer(List<NodeWalker.Item> items) {
+        for (int i = 0; i < items.size(); i++) {
+            String id = items.get(i).idTail;
+            // 只用播放器自身才有的控件，避免首页/动态页被误判成播放器页
+            if ("video_area_float_layer_container".equals(id)
+                    || id.startsWith("gemini_halfscreen")
+                    || id.startsWith("bbplayer_halfscreen")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static boolean looksPaused(List<NodeWalker.Item> items) {
+        for (int i = 0; i < items.size(); i++) {
+            NodeWalker.Item it = items.get(i);
+            if ("gemini_halfscreen_play".equals(it.idTail)) return true;
+            String lb = it.label();
+            if ("播放".equals(lb) || "继续播放".equals(lb)) return true;
+        }
+        return false;
+    }
+
     static final class Scan {
         Rect adRect;
         AccessibilityNodeInfo close;
@@ -57,11 +116,13 @@ final class PauseAdRule {
      * 这个组合几乎唯一，可以放心点。
      */
     static Scan scanPreCancel(AdGuardService svc, AccessibilityNodeInfo root) {
+        return scanPreCancel(svc, root, NodeWalker.flatten(root));
+    }
+
+    static Scan scanPreCancel(AdGuardService svc, AccessibilityNodeInfo root, List<NodeWalker.Item> items) {
         int sw = svc.screenWidth();
         int sh = svc.screenHeight();
         float d = svc.density();
-
-        List<NodeWalker.Item> items = NodeWalker.flatten(root);
 
         NodeWalker.Item hint = null;
         for (int i = 0; i < items.size(); i++) {
@@ -73,15 +134,29 @@ final class PauseAdRule {
         }
         if (hint == null) return null;
 
+        // Compose 版提示条会把「3秒后将展示广告」和「取消」合并进同一个语义节点，
+        // 这时整条提示就是一个可点节点，直接点它即可（点了就是取消）。
+        String hl = hint.label();
+        if (hl.contains("取消") && hint.clickable && Safety.reject(hint, sw, sh) == null) {
+            Scan s = new Scan();
+            s.close = hint.node;
+            s.score = 100;
+            s.why = "提示条合并节点（含取消）";
+            return s;
+        }
+
         int hintCy = (hint.rect.top + hint.rect.bottom) / 2;
         NodeWalker.Item cancel = null;
         for (int i = 0; i < items.size(); i++) {
             NodeWalker.Item it = items.get(i);
             String l = it.label().trim();
-            if (!"取消".equals(l) && !"取消展示".equals(l)) continue;
+            boolean isCancel = "取消".equals(l) || "取消展示".equals(l) || "取消广告".equals(l)
+                    || "关闭".equals(l) || "关闭广告".equals(l)
+                    || (l.contains("取消") && l.length() <= 8);
+            if (!isCancel) continue;
             int cy = (it.rect.top + it.rect.bottom) / 2;
-            if (Math.abs(cy - hintCy) > NodeUtil.dp(48, d)) continue;      // 必须同一行
-            if (it.rect.left < hint.rect.left - NodeUtil.dp(8, d)) continue; // 必须在提示文字右侧
+            if (Math.abs(cy - hintCy) > NodeUtil.dp(48, d)) continue;
+            if (it.rect.left < hint.rect.left - NodeUtil.dp(8, d)) continue;
             if (it.rect.left - hint.rect.right > NodeUtil.dp(200, d)) continue;
             if (Safety.reject(it, sw, sh) != null) continue;
             cancel = it;
@@ -96,20 +171,47 @@ final class PauseAdRule {
         return s;
     }
 
-    static Scan scan(AdGuardService svc, AccessibilityNodeInfo root) {        int sw = svc.screenWidth();
+    static Scan scan(AdGuardService svc, AccessibilityNodeInfo root) {
+        return scan(svc, root, NodeWalker.flatten(root));
+    }
+
+    static Scan scan(AdGuardService svc, AccessibilityNodeInfo root, List<NodeWalker.Item> items) {
+        int sw = svc.screenWidth();
         int sh = svc.screenHeight();
         float d = svc.density();
-
-        List<NodeWalker.Item> items = NodeWalker.flatten(root);
         if (items.isEmpty()) return null;
 
         // 已知的广告容器（B 站部分广告位 id 直接带 ad 词）
         List<Rect> adRects = new ArrayList<Rect>();
+        boolean hit = false;
         for (int i = 0; i < items.size(); i++) {
-            if (isAdContainer(items.get(i), sw, sh)) adRects.add(items.get(i).rect);
+            NodeWalker.Item it = items.get(i);
+            if (isAdContainer(it, sw, sh)) adRects.add(it.rect);
+            if (!hit) {
+                String lb = it.label();
+                String tl = it.idTail.toLowerCase();
+                // 常驻广告条（播放器下方那条）每帧都在，算进来会让抓取模式每帧落盘，
+                // 落盘把扫描线程拖住，广告真出现时反而来不及 —— 这里必须排除。
+                boolean worthNode = lb.contains("秒后") || lb.equals("取消")
+                        || tl.contains("close") || !adSlotSubtree(it) && lb.contains("广告");
+                if (worthNode) hit = true;
+            }
+        }
+        interesting = hit;
+
+        // 可信的"广告"角标：排除掉常驻广告条（ad_tint_frame / underplayer）里的角标。
+        // 否则内容区里任何面板的 × 都会因为"内容区里存在广告角标"而被当成广告关闭按钮。
+        List<NodeWalker.Item> markers = new ArrayList<NodeWalker.Item>();
+        for (int i = 0; i < items.size(); i++) {
+            NodeWalker.Item it = items.get(i);
+            if (isAdMarker(it) && !adSlotSubtree(it)) markers.add(it);
         }
 
         boolean aggressive = Prefs.aggressive();
+        StringBuilder dg = new StringBuilder(64);
+        dg.append("items=").append(items.size()).append(" adRects=").append(adRects.size());
+        int cands = 0;
+        String bestInfo = "";
         Scan best = null;
         for (int i = 0; i < items.size(); i++) {
             NodeWalker.Item it = items.get(i);
@@ -145,7 +247,7 @@ final class PauseAdRule {
             }
 
             // 卡片级容器：祖先链上含"广告"角标、面积 8%~85% 屏
-            Rect host = findAdCardHost(it, items, sw, sh);
+            Rect host = findAdCardHost(it, markers, sw, sh);
             if (host == null) {
                 for (int k = 0; k < adRects.size(); k++) {
                     if (NodeUtil.contains(adRects.get(k), cx, cy)) {
@@ -155,29 +257,37 @@ final class PauseAdRule {
                 }
             }
 
-            boolean nearCorner = nearAnyTopRight(it.rect, adRects, NodeUtil.dp(72, d));
-            if (host == null && !nearCorner) {
+            // 先计数：只要树里有 close 语义控件就算"可能正在入场"。
+            // 以前这行写在下面 continue 之后，导致广告角标还没挂上的那几帧 cands=0，
+            // 补扫永远不触发 —— 命不命中全看运气，这就是"有时灵有时不灵"的根因。
+            cands++;
+            if (bestInfo.length() == 0) {
+                bestInfo = "|" + it.label() + "@" + it.rect.left + "," + it.rect.top + " sc=" + score
+                        + " host=" + (host == null ? "null" : host.toShortString());
+            }
+
+            // 必须真的落在某个广告卡片里才动手。
+            // 早期版本还允许"贴近广告容器角落"就出手，结果把评论详情面板的 × 当成广告关闭点了。
+            if (host == null) {
                 if (!aggressive) continue;
             } else {
-                if (host != null) {
-                    score += 20;
-                    why.append("在广告卡片内 ");
-                    if (nearTopRight(it.rect, host, NodeUtil.dp(72, d))) {
-                        score += 40;
-                        why.append("贴卡片右上角 ");
-                    }
-                } else {
-                    score += 30;
-                    why.append("贴广告角 ");
+                score += 20;
+                why.append("在广告卡片内 ");
+                if (nearTopRight(it.rect, host)) {
+                    score += 40;
+                    why.append("贴卡片右上角 ");
                 }
             }
 
+            // 位置扣分只用来排除"播放器控制条上的按钮"，不能把真广告卡片的 × 一起毙掉：
+            // 竖屏小窗时广告卡片就贴在屏幕底部，旧规则直接扣 60 分，永远够不到阈值。
             int penalty = Safety.positionPenalty(
                     it.rect.left, it.rect.top, it.rect.right, it.rect.bottom, sw, sh, d);
+            if (host != null) penalty = Math.max(penalty, -20);
             score += penalty;
             if (penalty < 0) why.append("位置扣分").append(penalty).append(' ');
 
-            int need = (host == null && !nearCorner) ? SCORE_ACT_AGGRESSIVE : SCORE_ACT;
+            int need = host == null ? SCORE_ACT_AGGRESSIVE : SCORE_ACT;
             if (score < need) continue;
 
             if (best == null || score > best.score) {
@@ -188,6 +298,8 @@ final class PauseAdRule {
                 best.why = why.toString().trim();
             }
         }
+        candCount = cands;
+        diag = dg.append(" cands=").append(cands).append(' ').append(bestInfo).toString();
         return best;
     }
 
@@ -195,28 +307,95 @@ final class PauseAdRule {
      * 从候选节点往上找"卡片级"容器：面积 8%~85% 屏，且该矩形内存在"广告"角标。
      * 找到就说明这个候选确实落在一张广告卡片里，而不是播放器控制条上的普通按钮。
      */
-    private static Rect findAdCardHost(NodeWalker.Item item, List<NodeWalker.Item> items, int sw, int sh) {
+    /**
+     * 找候选所属的"广告卡片"。
+     *
+     * 优先：候选与某个「广告」角标的最小公共祖先 —— 这跟画幅、播放器占比无关，
+     * 只要 × 和角标在同一张卡片里就成立。
+     * 退路：沿祖先链找第一个矩形内包含角标的容器。
+     * 两种都不再用"面积必须 ≥8% 屏"这种绝对条件（竖屏小窗时卡片会被压到 8% 以下）。
+     */
+    private static Rect findAdCardHost(NodeWalker.Item item, List<NodeWalker.Item> markers, int sw, int sh) {
+        if (markers.isEmpty()) return null;
+
+        // 祖先链（含自身），顺带确认没走进常驻广告位
+        List<AccessibilityNodeInfo> chain = new ArrayList<AccessibilityNodeInfo>(10);
         AccessibilityNodeInfo p = item.node;
-        for (int up = 0; up < 8; up++) {
+        chain.add(p);
+        for (int up = 0; up < 9; up++) {
             try {
                 p = p.getParent();
             } catch (Exception e) {
-                return null;
+                break;
             }
-            if (p == null) return null;
-            Rect pr = NodeUtil.rect(p);
+            if (p == null) break;
+            String tail = NodeUtil.tail(NodeUtil.id(p));
+            if (UNDERPLAYER.equalsIgnoreCase(tail) || "ad_tint_frame".equalsIgnoreCase(tail)) return null;
+            chain.add(p);
+        }
+
+        // 最小公共祖先
+        Rect best = null;
+        for (int k = 0; k < markers.size(); k++) {
+            AccessibilityNodeInfo q = markers.get(k).node;
+            for (int up = 0; up < 9 && q != null; up++) {
+                if (chainContains(chain, q)) {
+                    Rect r = NodeUtil.rect(q);
+                    float ratio = NodeUtil.ratio(r, sw, sh);
+                    // 只做合理性上下限：太小是角标本身，太大是整页
+                    if (ratio >= 0.015f && ratio <= 0.95f) {
+                        if (best == null || NodeUtil.area(r) < NodeUtil.area(best)) best = r;
+                    }
+                    break;
+                }
+                try {
+                    q = q.getParent();
+                } catch (Exception e) {
+                    break;
+                }
+            }
+        }
+        if (best != null) return best;
+
+        // 退路：祖先链里第一个"矩形包含角标"的容器
+        for (int i = 1; i < chain.size(); i++) {
+            Rect pr = NodeUtil.rect(chain.get(i));
             float ratio = NodeUtil.ratio(pr, sw, sh);
-            if (ratio < 0.08f) continue;
-            if (ratio > 0.85f) return null;
-            for (int k = 0; k < items.size(); k++) {
-                NodeWalker.Item m = items.get(k);
-                if (!isAdMarker(m)) continue;
+            if (ratio < 0.015f) continue;
+            if (ratio > 0.95f) break;
+            for (int k = 0; k < markers.size(); k++) {
+                NodeWalker.Item m = markers.get(k);
                 int mx = (m.rect.left + m.rect.right) / 2;
                 int my = (m.rect.top + m.rect.bottom) / 2;
                 if (NodeUtil.contains(pr, mx, my)) return pr;
             }
         }
         return null;
+    }
+
+    /** 节点同一性：先用 equals，失败再比"类名+id+矩形" */
+    private static boolean chainContains(List<AccessibilityNodeInfo> chain, AccessibilityNodeInfo n) {
+        for (int i = 0; i < chain.size(); i++) {
+            AccessibilityNodeInfo c = chain.get(i);
+            if (c == n) return true;
+            try {
+                if (c.equals(n)) return true;
+            } catch (Exception ignore) {
+            }
+            if (sameNode(c, n)) return true;
+        }
+        return false;
+    }
+
+    private static boolean sameNode(AccessibilityNodeInfo a, AccessibilityNodeInfo b) {
+        if (a == null || b == null) return false;
+        String ia = NodeUtil.id(a);
+        String ib = NodeUtil.id(b);
+        if (!ia.equals(ib)) return false;
+        String ca = String.valueOf(a.getClassName());
+        String cb = String.valueOf(b.getClassName());
+        if (!ca.equals(cb)) return false;
+        return NodeUtil.rect(a).equals(NodeUtil.rect(b));
     }
 
     /** "广告"角标：文案就是广告/推广/赞助这一类短标签 */
@@ -239,10 +418,11 @@ final class PauseAdRule {
 
     private static boolean isAdContainer(NodeWalker.Item it, int sw, int sh) {
         float ratio = NodeUtil.ratio(it.rect, sw, sh);
-        if (ratio < 0.05f) return false;
+        if (ratio < 0.02f) return false;
+        if (underPlayerSlot(it)) return false;
         if (containsAdToken(it.idTail)) return true;
         String label = it.label();
-        if (label.length() > 0 && ratio >= 0.10f) {
+        if (label.length() > 0 && ratio >= 0.05f) {
             for (int i = 0; i < AD_LABELS.length; i++) {
                 if (label.contains(AD_LABELS[i])) return true;
             }
@@ -291,16 +471,52 @@ final class PauseAdRule {
         return t.substring(0, end).trim();
     }
 
-    private static boolean nearTopRight(Rect c, Rect host, int tol) {
-        if (host == null) return false;
-        int dx = Math.abs(c.right - host.right);
-        int dy = Math.abs(c.top - host.top);
-        return dx <= tol && dy <= tol && c.left >= host.left - tol && c.bottom <= host.bottom + tol;
+    /**
+     * 候选是否在 host 的右上角区域 —— 用 host 自身宽高归一化，不用固定 dp。
+     * 竖屏视频可以调播放器高度，广告卡片会被压扁或拉高，固定容差在这里必然漂。
+     * fx = 候选右边缘距 host 右边缘的比例；fy = 候选上边缘距 host 上边缘的比例。
+     */
+    private static boolean nearTopRight(Rect c, Rect host) {
+        if (host == null || c == null) return false;
+        int w = host.width();
+        int h = host.height();
+        if (w <= 0 || h <= 0) return false;
+        float fx = (host.right - c.right) / (float) w;
+        float fy = (c.top - host.top) / (float) h;
+        // 右上角一带：横向 0~20%、纵向 0~30%，允许略微出界（阴影/描边）
+        return fx >= -0.03f && fx <= 0.20f && fy >= -0.03f && fy <= 0.30f
+                && c.left >= host.left && c.bottom <= host.bottom;
     }
 
-    private static boolean nearAnyTopRight(Rect c, List<Rect> hosts, int tol) {
-        for (int i = 0; i < hosts.size(); i++) {
-            if (nearTopRight(c, hosts.get(i), tol)) return true;
+    /** 是否位于常驻广告位（ad_tint_frame / underplayer_container）子树里 */
+    private static boolean adSlotSubtree(NodeWalker.Item it) {
+        if ("ad_tint_frame".equalsIgnoreCase(it.idTail)) return true;
+        AccessibilityNodeInfo p = it.node;
+        for (int i = 0; i < 6; i++) {
+            try {
+                p = p.getParent();
+            } catch (Exception e) {
+                return false;
+            }
+            if (p == null) return false;
+            String tail = NodeUtil.tail(NodeUtil.id(p));
+            if (UNDERPLAYER.equalsIgnoreCase(tail) || "ad_tint_frame".equalsIgnoreCase(tail)) return true;
+        }
+        return false;
+    }
+
+    /** 自己或祖先是不是播放器下方那个常驻广告位 */
+    private static boolean underPlayerSlot(NodeWalker.Item it) {
+        if (UNDERPLAYER.equalsIgnoreCase(it.idTail)) return true;
+        AccessibilityNodeInfo p = it.node;
+        for (int i = 0; i < 6; i++) {
+            try {
+                p = p.getParent();
+            } catch (Exception e) {
+                return false;
+            }
+            if (p == null) return false;
+            if (UNDERPLAYER.equalsIgnoreCase(NodeUtil.tail(NodeUtil.id(p)))) return true;
         }
         return false;
     }

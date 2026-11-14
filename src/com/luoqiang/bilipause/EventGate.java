@@ -16,12 +16,15 @@ final class EventGate {
     /** 点完一次至少等 900ms 再动，避免连点把广告页点开 */
     private static final long GAP_AFTER_CLICK = 900L;
     private static final int STORM_THRESHOLD = 200;
+    /** 暂停后的密集窗口：200ms 一拍，用来抓只存在 3 秒的广告提示条 */
+    private static final long GAP_DENSE = 200L;
 
     private long lastScanAt = -10000L;
     private long lastClickAt = -10000L;
     private long bucketStart;
     private int bucketCount;
     private boolean busy;
+    private boolean dense;
 
     void noteEvent(long now) {
         if (now - bucketStart > 1000L) {
@@ -43,9 +46,14 @@ final class EventGate {
         busy = b;
     }
 
+    void setDense(boolean b) {
+        dense = b;
+    }
+
     boolean allowScan(long now, boolean knownPlayer) {
         if (busy) return false;
-        long gap = stormy() ? GAP_STORM : (knownPlayer ? GAP_NORMAL : GAP_UNKNOWN);
+        long gap = dense ? GAP_DENSE
+                : (stormy() ? GAP_STORM : (knownPlayer ? GAP_NORMAL : GAP_UNKNOWN));
         if (now - lastScanAt < gap) return false;
         if (now - lastClickAt < GAP_AFTER_CLICK) return false;
         lastScanAt = now;

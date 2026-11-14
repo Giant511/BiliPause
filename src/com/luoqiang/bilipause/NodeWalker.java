@@ -15,8 +15,8 @@ import java.util.Locale;
  */
 final class NodeWalker {
 
-    static final int MAX_NODES = 900;
-    static final int MAX_DEPTH = 28;
+    static final int MAX_NODES = 1300;
+    static final int MAX_DEPTH = 32;
     private static final int MAX_CHILDREN = 80;
     private static final int DUMP_MAX_DEPTH = 40;
     private static final int DUMP_MAX_LINES = 1600;
@@ -52,6 +52,18 @@ final class NodeWalker {
         }
     }
 
+    /** 可能是"子节点还没挂上"的容器：面积够大且是 ViewGroup/Compose 一类 */
+    private static boolean looksContainer(Item it) {
+        String c = it.cls;
+        if (c == null || c.length() == 0) return false;
+        if (c.contains("ComposeView") || c.contains("ViewGroup") || c.contains("FrameLayout")
+                || c.contains("LinearLayout") || c.contains("RelativeLayout")
+                || c.contains("RecyclerView") || c.contains("ConstraintLayout")) {
+            return it.rect.width() >= 80 && it.rect.height() >= 80;
+        }
+        return false;
+    }
+
     static List<Item> flatten(AccessibilityNodeInfo root) {
         List<Item> out = new ArrayList<Item>(128);
         if (root == null) return out;
@@ -63,6 +75,16 @@ final class NodeWalker {
             out.add(it);
             if (it.depth >= MAX_DEPTH) continue;
             int n = it.node.getChildCount();
+            // Compose / 容器节点的子节点是异步挂上来的：扫描这一刻可能还是 0 个，
+            // 几十毫秒后（比如同一拍里稍晚生成的 dump）就有了。
+            // 实测就是"dump 里有『后将展示广告』、扫描却没找到"，错过 2~3 秒的提示条。
+            if (n == 0 && it.depth < MAX_DEPTH && looksContainer(it)) {
+                try {
+                    it.node.refresh();
+                } catch (Exception ignore) {
+                }
+                n = it.node.getChildCount();
+            }
             if (n > MAX_CHILDREN) n = MAX_CHILDREN;
             for (int i = 0; i < n; i++) {
                 if (queue.size() >= MAX_NODES) break;

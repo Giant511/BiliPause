@@ -10,8 +10,8 @@ if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 cd /d "%ROOT%"
 
 rem ---- version ----
-set "VC=5"
-set "VN=1.4"
+set "VC=7"
+set "VN=1.6"
 set "APKNAME=BiliPauseAd-%VN%.apk"
 
 rem ---- toolchain ----

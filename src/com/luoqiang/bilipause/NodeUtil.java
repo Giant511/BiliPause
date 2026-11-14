@@ -38,6 +38,7 @@ final class NodeUtil {
 
     static Rect rect(AccessibilityNodeInfo n) {
         Rect r = new Rect();
+        if (n == null) return r;
         n.getBoundsInScreen(r);
         return r;
     }
